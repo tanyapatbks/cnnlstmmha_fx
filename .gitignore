@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+myenv/
+
+# Data & Experiment results
+data/
+experiments/
+latest/
+
+# IDE / Editor config
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
