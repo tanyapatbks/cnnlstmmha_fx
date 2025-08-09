@@ -14,9 +14,6 @@ class PureCNNLSTMMHA:
         self.model = self.build_model()
         
     def build_model(self):
-        """
-        Build pure CNN-LSTM-MHA model for binary classification
-        """
         # Input layer
         inputs = Input(shape=(self.config.WINDOW_SIZE, self.config.TOTAL_FEATURES))
         
@@ -75,9 +72,6 @@ class PureCNNLSTMMHA:
         return model
     
     def train(self, X_train, y_train, X_val, y_val):
-        """
-        Simple training without complex tricks
-        """
         print("🎯 Training model...")
         
         # Setup callbacks
@@ -113,19 +107,14 @@ class PureCNNLSTMMHA:
         return history
     
     def predict(self, X):
-        """Simple prediction"""
         return self.model.predict(X)
     
     def save_model(self):
-        """Save final model"""
         model_path = f"{self.config.EXPERIMENT_PATH}/final_model.keras"
         self.model.save(model_path)
         return model_path
 
 def evaluate_predictions(predictions, y_actual):
-    """
-    Simple evaluation metrics
-    """
     pred_binary = (predictions > 0.5).astype(int).flatten()
     actual_binary = y_actual.astype(int)
     

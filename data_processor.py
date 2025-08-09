@@ -8,7 +8,6 @@ class DataProcessor:
         self.config = config
         
     def load_currency_data(self):
-        """Load raw currency data from CSV files"""
         raw_data = {}
         
         for pair in self.config.ALL_CURRENCY_PAIRS:
@@ -30,9 +29,6 @@ class DataProcessor:
         return raw_data
     
     def preprocess_ohlc(self, ohlc_data, train_start, train_end):
-        """
-        Simple OHLC preprocessing: percentage change + z-score normalization
-        """
         # Calculate percentage change
         ohlc_pct = ohlc_data.pct_change().dropna()
         
@@ -54,9 +50,6 @@ class DataProcessor:
         return ohlc_normalized
     
     def preprocess_volume(self, volume_data, train_start, train_end):
-        """
-        Simple Volume preprocessing: 7SD capping + min-max scaling
-        """
         # Get training period for statistics
         train_start_dt = pd.to_datetime(train_start, utc=True)
         train_end_dt = pd.to_datetime(train_end, utc=True)
@@ -81,10 +74,55 @@ class DataProcessor:
         
         return volume_scaled
     
+    def calculate_rsi(self, close_prices, period=14):
+        delta = close_prices.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        
+        return rsi
+    
+    def calculate_macd(self, close_prices, fast=12, slow=26, signal=9):
+        ema_fast = close_prices.ewm(span=fast).mean()
+        ema_slow = close_prices.ewm(span=slow).mean()
+        
+        macd_line = ema_fast - ema_slow
+        signal_line = macd_line.ewm(span=signal).mean()
+        histogram = macd_line - signal_line
+        
+        return macd_line, signal_line, histogram
+    
+    def normalize_indicators(self, rsi, macd_line, signal_line, histogram, train_start, train_end):
+        # Get training period
+        train_start_dt = pd.to_datetime(train_start, utc=True)
+        train_end_dt = pd.to_datetime(train_end, utc=True)
+        
+        # RSI normalization: [0, 100] → [0, 1]
+        rsi_normalized = rsi / 100.0
+        
+        # MACD components: z-score normalization using training statistics
+        for data, name in [(macd_line, 'MACD'), (signal_line, 'Signal'), (histogram, 'Histogram')]:
+            train_mask = (data.index >= train_start_dt) & (data.index <= train_end_dt)
+            train_data = data[train_mask]
+            
+            if name == 'MACD':
+                train_mean_macd = train_data.mean()
+                train_std_macd = train_data.std()
+                macd_normalized = (macd_line - train_mean_macd) / train_std_macd
+            elif name == 'Signal':
+                train_mean_signal = train_data.mean()
+                train_std_signal = train_data.std()
+                signal_normalized = (signal_line - train_mean_signal) / train_std_signal
+            elif name == 'Histogram':
+                train_mean_hist = train_data.mean()
+                train_std_hist = train_data.std()
+                histogram_normalized = (histogram - train_mean_hist) / train_std_hist
+        
+        return rsi_normalized, macd_normalized, signal_normalized, histogram_normalized
+    
     def create_unified_features(self, processed_data):
-        """
-        Combine all currency features into unified matrix
-        """
         feature_list = []
         
         for pair in self.config.ALL_CURRENCY_PAIRS:
@@ -96,19 +134,22 @@ class DataProcessor:
             
             # Add Volume feature
             feature_list.append(pair_data['Volume'])
+            
+            # Add Indicators features
+            feature_list.append(pair_data['RSI'])
+            feature_list.append(pair_data['MACD'])
+            feature_list.append(pair_data['Signal'])
+            feature_list.append(pair_data['Histogram'])
         
         # Combine all features
         unified_features = pd.concat(feature_list, axis=1)
         unified_features.columns = [f"{pair}_{col}" for pair in self.config.ALL_CURRENCY_PAIRS 
-                                   for col in ['Open', 'High', 'Low', 'Close', 'Volume']]
+                                   for col in ['Open', 'High', 'Low', 'Close', 'Volume', 'RSI', 'MACD', 'Signal', 'Histogram']]
         unified_features.dropna(inplace=True)
         
         return unified_features
     
     def prepare_binary_target(self, close_prices):
-        """
-        Simple binary target: 1 if price goes up, 0 if price goes down
-        """
         price_change = close_prices.pct_change().shift(-1)
         binary_target = (price_change > 0).astype(int)
         binary_target.dropna(inplace=True)
@@ -116,9 +157,6 @@ class DataProcessor:
         return binary_target
     
     def create_sequences(self, features, target):
-        """
-        Create sequences for training
-        """
         # Align features and target
         common_index = features.index.intersection(target.index)
         features = features.loc[common_index]
@@ -133,10 +171,7 @@ class DataProcessor:
         return np.array(X), np.array(y)
     
     def prepare_data(self):
-        """
-        Complete data preparation pipeline
-        """
-        print("📊 Loading and preprocessing data...")
+        print("📊 Loading and preprocessing data with indicators...")
         
         # Load raw data
         raw_data = self.load_currency_data()
@@ -144,25 +179,51 @@ class DataProcessor:
         # Process each currency pair
         processed_data = {}
         for pair in self.config.ALL_CURRENCY_PAIRS:
+            print(f"   Processing {pair}...")
             pair_data = raw_data[pair].copy()
             
-            # Process OHLC
+            # Process OHLCV (existing)
             ohlc_normalized = self.preprocess_ohlc(
                 pair_data[['Open', 'High', 'Low', 'Close']], 
                 self.config.TRAIN_START, 
                 self.config.TRAIN_END
             )
             
-            # Process Volume
+            # Process Volume (existing)
             volume_scaled = self.preprocess_volume(
                 pair_data['Volume'], 
                 self.config.TRAIN_START, 
                 self.config.TRAIN_END
             )
             
-            # Combine processed data
-            processed_pair = pd.concat([ohlc_normalized, volume_scaled.rename('Volume')], axis=1)
+            # Calculate indicators
+            rsi = self.calculate_rsi(pair_data['Close'], self.config.RSI_PERIOD)
+            macd_line, signal_line, histogram = self.calculate_macd(
+                pair_data['Close'], 
+                self.config.MACD_FAST, 
+                self.config.MACD_SLOW, 
+                self.config.MACD_SIGNAL
+            )
+            
+            # Normalize indicators
+            rsi_norm, macd_norm, signal_norm, hist_norm = self.normalize_indicators(
+                rsi, macd_line, signal_line, histogram,
+                self.config.TRAIN_START, 
+                self.config.TRAIN_END
+            )
+            
+            # Combine all processed data
+            processed_pair = pd.concat([
+                ohlc_normalized, 
+                volume_scaled.rename('Volume'),
+                rsi_norm.rename('RSI'),
+                macd_norm.rename('MACD'),
+                signal_norm.rename('Signal'),
+                hist_norm.rename('Histogram')
+            ], axis=1)
+            
             processed_data[pair] = processed_pair
+            print(f"   ✅ {pair}: {processed_pair.shape[1]} features")
         
         # Create unified features
         unified_features = self.create_unified_features(processed_data)
@@ -191,6 +252,7 @@ class DataProcessor:
         
         print(f"Training data: {X_train.shape}")
         print(f"Validation data: {X_val.shape}")
+        print(f"Features per currency: 9 (OHLCV + RSI + MACD + Signal + Histogram)")
         print(f"Target distribution - UP: {y_train.mean():.1%}, DOWN: {(1-y_train.mean()):.1%}")
         
         return X_train, y_train, X_val, y_val

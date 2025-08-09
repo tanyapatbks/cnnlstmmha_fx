@@ -11,9 +11,6 @@ from data_processor import DataProcessor
 from cnn_lstm_mha import PureCNNLSTMMHA, evaluate_predictions
 
 def save_results(config, history, predictions, y_val, metrics):
-    """
-    Save simple results to experiment folder
-    """
     # Save training log
     log_path = f"{config.EXPERIMENT_PATH}/training_log.txt"
     with open(log_path, 'w') as f:
@@ -71,9 +68,6 @@ def save_results(config, history, predictions, y_val, metrics):
             f.write(f"{signal}: {count} ({count/total*100:.1f}%)\n")
 
 def main():
-    """
-    Pure training pipeline
-    """
     print("🚀 PURE CNN-LSTM-MHA FOREX PREDICTION")
     print("=" * 50)
     print("Pure Historical Data Training")
